@@ -18,7 +18,7 @@ import sys
 import argparse
 from collections import defaultdict
 
-# ------------------------------ FASTA 解析（纯手写）---------------------------------
+# ------------------------------ FASTA pharse ---------------------------------
 def read_fasta_dict(fasta_file):
     """
     Read FASTA file and return a dictionary: {seq_id: seq_string}
@@ -70,7 +70,7 @@ def parse_blast_with_headers(blast_file):
         required = ['qaccver', 'saccver', 'pident', 'length', 'qstart', 'qend', 'slen']
         missing = [c for c in required if c not in col_idx]
         if missing:
-            raise ValueError(f"BLAST 文件缺少必要列: {missing}")
+            raise ValueError(f"BLAST file is in lack of essential columns: {missing}")
         # stitle is optional; set index to -1 if not present
         if 'stitle' not in col_idx:
             col_idx['stitle'] = -1
@@ -183,7 +183,7 @@ def output_filtered_table(intervals, original_headers, output_tsv):
             f.write(itv[0] + '\n')
     print(f"Filtered table -> {output_tsv} ( {len(intervals)} )")
 
-# ------------------------------ 主函数 ---------------------------------
+# ------------------------------ main function ---------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Extract homologous regions from BLAST results (pure standard library, no Biopython)")
     parser.add_argument("-b", "--blast", required=True, help="BLAST result file (tab-separated with header line)")
@@ -194,12 +194,12 @@ def main():
     args = parser.parse_args()
 
     # 1. Read BLAST file
-    print("Reading BLAST 文件...")
+    print("Reading BLAST file ...")
     col_idx, rows = parse_blast_with_headers(args.blast)
     original_headers = open(args.blast).readline().strip()
 
     # 2. Filter by length and coverage
-    print(f"Filtering  length<{args.min_len} 且 scov<{args.min_scov} ...")
+    print(f"Filtering  length<{args.min_len} and scov<{args.min_scov} ...")
     filtered = filter_by_length_and_scov(rows, col_idx, args.min_len, args.min_scov)
     if not filtered:
         print("Warning: No rows passed filtering, output empty")
@@ -230,7 +230,7 @@ def main():
     write_fasta(records, fasta_out)
     print(f"Extracted {len(records)} sequences -> {fasta_out}")
 
-    # 8. 输出过滤后的 BLAST 表格
+    # Write filtered table
     output_filtered_table(all_selected, original_headers, args.output + ".filtered.tsv")
 
     print("Done")
