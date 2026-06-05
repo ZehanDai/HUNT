@@ -28,7 +28,7 @@ chmod +x run_blastn.sh
 ## Example
 Test files are provided in the test_files/ directory. You can run the tool with the following command:
 ```
-bash run_blastn_7HK_v.5.sh -q test_files/query -r test_files/reference -b oud_blastn -e extracted_homologs
+bash main.sh -q test_files/query -r test_files/reference -b oud_blastn -e extracted_homologs
 ```
 
 **Note**: this is optimized for complete circular chromosomes or near‑complete genome assemblies when aligning against full‑length reference gene sequences (or similarly sized regions). When applied to draft genome assemblies (e.g., contigs or scaffolds), the extracted homologous regions may be shorter or fragmented due to assembly gaps or incomplete gene coverage.
