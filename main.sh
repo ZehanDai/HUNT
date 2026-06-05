@@ -1,38 +1,43 @@
 #!/bin/bash
 set -e
 
-# ==================== 显示帮助 ====================
+# ==================== Description ====================
+# version: v0.10
+# update: 20260605
+# implementation: 1) input query and reference are bot nucleic acid sequences, homolog scanning employs blastn
+
+# ==================== Show help ====================
 show_help() {
     cat << EOF
-用法: $0 -q <查询序列目录> -r <参考基因目录> [-b <BLAST输出目录>] [-e <提取输出目录>] [-h]
+Usage: $0 -q <query directory> -r <reference directory> [-b <BLAST output directory>] [-e <extraction output directory>] [-h]
 
-必需参数:
-  -q, --query     查询序列所在目录（包含 .fasta/.fna/.fa 文件）
-  -r, --ref       参考基因所在目录（包含 .fasta/.fna/.fa 文件）
+Required arguments:
+  -q, --query     Directory containing query FASTA files (.fasta/.fna/.fa)
+  -r, --ref       Directory containing reference FASTA files (.fasta/.fna/.fa)
 
-可选参数:
-  -b, --blast-out BLAST 结果输出目录（默认: oud_blastn）
-  -e, --extract-out 提取的 FASTA 和过滤表输出目录（默认: extracted_homologs）
-  -h, --help      显示此帮助信息
+Optional arguments:
+  -b, --blast-out   BLAST output directory (default: oud_blastn)
+  -e, --extract-out Output directory for extracted FASTA and filtered table (default: extracted_homologs)
+  -h, --help        Show this help message
 
-示例:
+Examples:
   $0 -q ./query -r ./reference
   $0 -q ./query -r ./reference -b my_blast -e my_extract
 EOF
     exit 0
 }
 
-# ==================== 解析参数 ====================
-# 默认值
+# ==================== Parse arguments ====================
+# Default values
 blast_out="oud_blastn"
 extract_out="extracted_homologs"
 qued=""
 refd=""
 
-# 使用 getopt 支持长选项
+# Use getopt to support long options
 OPTS=$(getopt -o q:r:b:e:h --long query:,ref:,blast-out:,extract-out:,help -n "$0" -- "$@")
 if [ $? != 0 ]; then
-    echo "参数解析失败，请使用 -h 查看帮助"
+    echo "Failed to parse arguments. Use -h for help."
     exit 1
 fi
 eval set -- "$OPTS"
@@ -63,54 +68,54 @@ while true; do
             break
             ;;
         *)
-            echo "内部错误！"
+            echo "Internal error!"
             exit 1
             ;;
     esac
 done
 
-# 检查必需参数
+# Check required arguments
 if [ -z "$qued" ] || [ -z "$refd" ]; then
-    echo "错误：必须指定查询序列目录 (-q) 和参考基因目录 (-r)"
-    echo "使用 -h 查看帮助"
+    echo "Error: Both query directory (-q) and reference directory (-r) must be specified."
+    echo "Use -h for help."
     exit 1
 fi
 
-# 创建输出目录
+# Create output directories
 mkdir -p "$blast_out" "$extract_out"
 
-# ==================== 收集文件 ====================
-# 支持 .fasta / .fna / .fa 等常见后缀
+# ==================== Collect files ====================
+# Support common FASTA extensions: .fasta / .fna / .fa
 shopt -s nullglob
 ref_files=("$refd"/*.fasta "$refd"/*.fna "$refd"/*.fa)
 query_files=("$qued"/*.fasta "$qued"/*.fna "$qued"/*.fa)
 shopt -u nullglob
 
 if [ ${#ref_files[@]} -eq 0 ]; then
-    echo "错误：在 $refd 中未找到参考基因文件（*.fasta/fna/fa）"
+    echo "Error: No reference gene files found in $refd (supported: .fasta/.fna/.fa)"
     exit 1
 fi
 if [ ${#query_files[@]} -eq 0 ]; then
-    echo "错误：在 $qued 中未找到查询fasta文件（*.fasta/fna/fa）"
+    echo "Error: No query FASTA files found in $qued (supported: .fasta/.fna/.fa)"
     exit 1
 fi
 
-# BLAST 输出列名（与 -outfmt 顺序一致）
+# BLAST output column headers (consistent with -outfmt order)
 header="qaccver\tsaccver\tpident\tlength\tmismatch\tgapopen\tqstart\tqend\tsstart\tsend\tevalue\tbitscore\tqlen\tslen\tstitle\tqacc\tqseqid"
 
-# ==================== 处理函数 ====================
+# ==================== Processing function ====================
 process_ref() {
     local ref_file=$1
     local ref_name=$2
     local ref_db_prefix="$blast_out/$ref_name"
 
     if [ ! -f "$ref_db_prefix.nhr" ]; then
-        echo "[makeblastdb] 为参考基因 $ref_name 建立数据库 ..."
+        echo "[makeblastdb] Building database for reference $ref_name ..."
         makeblastdb -in "$ref_file" -out "$ref_db_prefix" -dbtype nucl
     fi
 
     for qfile in "${query_files[@]}"; do
-        # 去除路径和扩展名（支持 .fasta/.fna/.fa）
+        # Remove path and extension (supports .fasta/.fna/.fa)
         qname=$(basename "$qfile")
         qname="${qname%.fasta}"
         qname="${qname%.fna}"
@@ -118,9 +123,9 @@ process_ref() {
         blast_tsv="$blast_out/${qname}_vs_${ref_name}.tsv"
 
         if [ -f "$blast_tsv" ]; then
-            echo "[skip] BLAST结果 $blast_tsv 已存在，跳过比对"
+            echo "[skip] BLAST result $blast_tsv already exists. Skipping alignment."
         else
-            echo "[blastn] 将 $qname 比对到参考基因 $ref_name ..."
+            echo "[blastn] Aligning $qname against reference $ref_name ..."
             (echo -e "$header" && \
              blastn -query "$qfile" -db "$ref_db_prefix" \
                 -outfmt '6 qaccver saccver pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen stitle qacc qseqid' \
@@ -131,23 +136,23 @@ process_ref() {
         prefix="${extract_out}/${qname}_${ref_name}"
         extract_fasta="${prefix}.fasta"
         if [ -f "$extract_fasta" ]; then
-            echo "[skip] 提取结果 $extract_fasta 已存在，跳过提取"
+            echo "[skip] Extraction result $extract_fasta already exists. Skipping extraction."
         else
-            echo "[extract] 从 $qname 中提取匹配 $ref_name 的区间 ..."
+            echo "[extract] Extracting regions matching $ref_name from $qname ..."
             python3 extract_homolog_regions.py -b "$blast_tsv" -q "$qfile" -o "$prefix"
         fi
     done
 }
 
-# ==================== 主循环 ====================
+# ==================== Main loop ====================
 for ref_file in "${ref_files[@]}"; do
-    # 去除路径和扩展名（支持 .fasta/.fna/.fa）
+    # Remove path and extension (supports .fasta/.fna/.fa)
     ref_basename=$(basename "$ref_file")
     ref_basename="${ref_basename%.fasta}"
     ref_basename="${ref_basename%.fna}"
     ref_basename="${ref_basename%.fa}"
-    echo "========== 处理参考基因：$ref_basename =========="
+    echo "========== Processing reference gene: $ref_basename =========="
     process_ref "$ref_file" "$ref_basename"
 done
 
-echo "全部完成！提取的序列保存在 $extract_out/ 目录中。"
+echo "All done! Extracted sequences are saved in $extract_out/"
