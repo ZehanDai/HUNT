@@ -2,15 +2,15 @@
 """
 extract_homolog_regions.py
 
-基于 BLAST 结果提取同源区段（纯标准库，无 Biopython 依赖）：
-- 过滤 length<50 且 scov<0.05
-- 按 qaccver 分组
-- 相同坐标去重（保留 scov*pident 最大）
-- 移除被完全包含的区间（保留外层区间）
-- 部分重叠的区间全部保留（不剔除）
-- 输出提取的 FASTA 和过滤后的 BLAST 表格
+Extract homologous regions from BLAST results (pure standard library, no Biopython dependency):
+- Filter alignments with length < 50 and coverage (scov = length/slen) < 0.05
+- Group by qaccver
+- Deduplicate identical coordinates (keep best scov * pident)
+- Remove intervals fully contained within another (keep outer interval)
+- Keep all partially overlapping intervals (do not discard)
+- Output extracted FASTA and filtered BLAST table
 
-用法：
+Usage:
     python extract_homolog_regions.py -b blast.tsv -q query.fasta -o output_prefix
 """
 
@@ -21,8 +21,8 @@ from collections import defaultdict
 # ------------------------------ FASTA 解析（纯手写）---------------------------------
 def read_fasta_dict(fasta_file):
     """
-    读取 FASTA 文件，返回字典：{seq_id: seq_string}
-    假设序列 ID 为 '>' 后第一个非空白连续字符串（直到遇到空格或换行）
+    Read FASTA file and return a dictionary: {seq_id: seq_string}
+    Assumes sequence ID is the first non-whitespace string after '>' (until space or newline)
     """
     seq_dict = {}
     current_id = None
@@ -33,45 +33,45 @@ def read_fasta_dict(fasta_file):
             if not line:
                 continue
             if line.startswith('>'):
-                # 保存上一条序列
+                # Save previous sequence
                 if current_id is not None:
                     seq_dict[current_id] = ''.join(seq_lines)
-                # 解析新 ID：取 '>' 后的第一个单词（空格、制表符分隔）
+                # Parse new ID: take first word after '>' (split by space or tab)
                 header = line[1:].strip()
-                current_id = header.split()[0]   # 只保留第一个单词作为 ID
+                current_id = header.split()[0]   # Keep only first word as ID
                 seq_lines = []
             else:
                 seq_lines.append(line)
-        # 最后一条序列
+        # Last sequence
         if current_id is not None:
             seq_dict[current_id] = ''.join(seq_lines)
     return seq_dict
 
 def write_fasta(records, output_file):
     """
-    将 [(id, seq), ...] 写入 FASTA 文件
+    Write list of (id, seq) to FASTA file
     """
     with open(output_file, 'w') as f:
         for seq_id, seq in records:
             f.write(f">{seq_id}\n")
-            # 每行 80 个碱基（可选）
+            # Write 80 bases per line (optional)
             for i in range(0, len(seq), 80):
                 f.write(seq[i:i+80] + "\n")
 
-# ------------------------------ BLAST 处理函数 ---------------------------------
+# ------------------------------ BLAST processing  ---------------------------------
 def parse_blast_with_headers(blast_file):
-    """读取带列名行的 BLAST 结果文件"""
+    """Read BLAST result file with header line (tab-separated)"""
     with open(blast_file) as f:
         header_line = f.readline().strip()
         if not header_line:
-            raise ValueError("BLAST 文件为空")
+            raise ValueError("BLAST BLAST file is empty")
         columns = header_line.split('\t')
         col_idx = {col: i for i, col in enumerate(columns)}
         required = ['qaccver', 'saccver', 'pident', 'length', 'qstart', 'qend', 'slen']
         missing = [c for c in required if c not in col_idx]
         if missing:
             raise ValueError(f"BLAST 文件缺少必要列: {missing}")
-        # stitle 不是必须的，如果没有则设索引为 -1
+        # stitle is optional; set index to -1 if not present
         if 'stitle' not in col_idx:
             col_idx['stitle'] = -1
         rows = []
@@ -86,7 +86,7 @@ def parse_blast_with_headers(blast_file):
     return col_idx, rows
 
 def filter_by_length_and_scov(rows, col_idx, min_len=50, min_scov=0.05):
-    """过滤：length >= min_len 且 scov = length/slen >= min_scov"""
+    """Filter: length >= min_len and scov = length/slen >= min_scov"""
     filtered = []
     for line, parts in rows:
         length = float(parts[col_idx['length']])
@@ -100,7 +100,7 @@ def filter_by_length_and_scov(rows, col_idx, min_len=50, min_scov=0.05):
     return filtered
 
 def group_by_qaccver(filtered_rows, col_idx):
-    """按 qaccver 分组，每个元素包含 (line, parts, scov, qaccver, qstart, qend, score)"""
+    """Group by qaccver; each item contains (line, parts, scov, qaccver, qstart, qend, score)"""
     groups = defaultdict(list)
     for line, parts, scov in filtered_rows:
         qaccver = parts[col_idx['qaccver']]
@@ -114,7 +114,7 @@ def group_by_qaccver(filtered_rows, col_idx):
     return groups
 
 def deduplicate_by_coords(intervals):
-    """相同坐标去重，保留 score 最大的"""
+    """Deduplicate identical coordinates, keep the one with highest score"""
     best = {}
     for itv in intervals:
         key = (itv[4], itv[5])  # (qstart, qend)
@@ -124,19 +124,17 @@ def deduplicate_by_coords(intervals):
 
 def remove_contained(intervals):
     """
-    移除被其他区间完全包含的区间。
-    注意：不处理部分重叠，被包含的才移除。
-    返回剩余的列表。
+    Remove intervals that are fully contained within another interval.
+    Note: Only fully contained intervals are removed; partially overlapping ones are kept.
+    Returns the remaining list.
     """
     if len(intervals) <= 1:
         return intervals
-    # 按区间长度降序排序（长的在前）
     intervals_sorted = sorted(intervals, key=lambda x: (x[5] - x[4]), reverse=True)
     keep = []
     for itv in intervals_sorted:
         contained = False
         for kept in keep:
-            # 如果 kept 完全包含 itv
             if kept[4] <= itv[4] and kept[5] >= itv[5]:
                 contained = True
                 break
@@ -145,7 +143,7 @@ def remove_contained(intervals):
     return keep
 
 def process_one_qaccver(intervals):
-    """去重 -> 去包含 -> 返回保留区间"""
+    """Deduplicate -> remove contained -> return kept intervals"""
     if not intervals:
         return []
     step1 = deduplicate_by_coords(intervals)
@@ -154,8 +152,8 @@ def process_one_qaccver(intervals):
 
 def extract_sequences(intervals, query_fasta_dict, col_idx):
     """
-    根据保留的区间，从 query FASTA 字典中提取子序列。
-    返回列表 [(seq_id, seq_string), ...]
+    Extract subsequences from query FASTA dict based on kept intervals.
+    Returns list of [(seq_id, seq_string), ...]
     """
     records = []
     for itv in intervals:
@@ -164,7 +162,7 @@ def extract_sequences(intervals, query_fasta_dict, col_idx):
         qend = itv[5]
         saccver = itv[1][col_idx['saccver']]
         if qaccver not in query_fasta_dict:
-            print(f"警告: {qaccver} 在查询 FASTA 中未找到，跳过", file=sys.stderr)
+            print(f"Warning: {qaccver} not found in query FASTA, skipping", file=sys.stderr)
             continue
         full_seq = query_fasta_dict[qaccver]
         # 边界保护
@@ -172,72 +170,70 @@ def extract_sequences(intervals, query_fasta_dict, col_idx):
             qstart = 1
         if qend > len(full_seq):
             qend = len(full_seq)
-        sub_seq = full_seq[qstart-1:qend]   # 1-based 转 Python 0-based
+        sub_seq = full_seq[qstart-1:qend]   # 1-based to 0-based Python slice
         seq_id = f"{qaccver}_{saccver}_{qstart}_{qend}"
         records.append((seq_id, sub_seq))
     return records
 
 def output_filtered_table(intervals, original_headers, output_tsv):
-    """输出过滤后的 BLAST 表格（保留原表头）"""
+    """Output filtered BLAST table (preserve original header)"""
     with open(output_tsv, 'w') as f:
         f.write(original_headers + '\n')
         for itv in intervals:
             f.write(itv[0] + '\n')
-    print(f"过滤后表格 -> {output_tsv} (共 {len(intervals)} 行)")
+    print(f"Filtered table -> {output_tsv} ( {len(intervals)} )")
 
 # ------------------------------ 主函数 ---------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="基于 BLAST 结果提取同源区段（纯标准库，无 Biopython）")
-    parser.add_argument("-b", "--blast", required=True, help="BLAST 结果文件（带列名行，制表符分隔）")
-    parser.add_argument("-q", "--query", required=True, help="查询序列 FASTA 文件")
-    parser.add_argument("-o", "--output", required=True, help="输出文件前缀（将生成 .fasta 和 .filtered.tsv）")
-    parser.add_argument("--min_len", type=int, default=50, help="最小比对长度，默认 50")
-    parser.add_argument("--min_scov", type=float, default=0.05, help="最小覆盖度 (length/slen)，默认 0.05")
+    parser = argparse.ArgumentParser(description="Extract homologous regions from BLAST results (pure standard library, no Biopython)")
+    parser.add_argument("-b", "--blast", required=True, help="BLAST result file (tab-separated with header line)")
+    parser.add_argument("-q", "--query", required=True, help="Query sequence FASTA file")
+    parser.add_argument("-o", "--output", required=True, help="Output prefix (will generate .fasta and .filtered.tsv)")
+    parser.add_argument("--min_len", type=int, default=50, help="Minimum alignment length, default 50")
+    parser.add_argument("--min_scov", type=float, default=0.05, help="Minimum coverage (length/slen), default 0.05")
     args = parser.parse_args()
 
-    # 1. 读取 BLAST 文件
-    print("读取 BLAST 文件...")
+    # 1. Read BLAST file
+    print("Reading BLAST 文件...")
     col_idx, rows = parse_blast_with_headers(args.blast)
     original_headers = open(args.blast).readline().strip()
 
-    # 2. 过滤长度和覆盖度
-    print(f"过滤 length<{args.min_len} 且 scov<{args.min_scov} ...")
+    # 2. Filter by length and coverage
+    print(f"Filtering  length<{args.min_len} 且 scov<{args.min_scov} ...")
     filtered = filter_by_length_and_scov(rows, col_idx, args.min_len, args.min_scov)
     if not filtered:
-        print("警告：没有通过过滤的行，输出为空")
+        print("Warning: No rows passed filtering, output empty")
         open(args.output + ".fasta", 'w').close()
         with open(args.output + ".filtered.tsv", 'w') as f:
             f.write(original_headers + '\n')
         return
-    print(f"  过滤后剩余 {len(filtered)} 行")
+    print(f"  {len(filtered)} rows remaining after filtering")
 
-    # 3. 按 qaccver 分组
+    # 3. Group by qaccver
     groups = group_by_qaccver(filtered, col_idx)
 
-    # 4. 对每个组进行处理
+    # 4. Process each group
     all_selected = []
     for qaccver, intervals in groups.items():
         selected = process_one_qaccver(intervals)
         all_selected.extend(selected)
-        print(f"  {qaccver}: 原始 {len(intervals)} -> 去重+去包含后 {len(selected)} 个区间")
+        print(f"  {qaccver}: original {len(intervals)} -> dedup+contained removal {len(selected)} intervals")
 
-    # 5. 读取查询 FASTA
-    print("读取查询 FASTA...")
+    print("Reading query FASTA...")
     query_dict = read_fasta_dict(args.query)
 
-    # 6. 提取序列
-    print("提取子序列...")
+    print("Extracting subsequences...")
     records = extract_sequences(all_selected, query_dict, col_idx)
-
-    # 7. 输出 FASTA
+    
+    # Write FASTA
     fasta_out = args.output + ".fasta"
     write_fasta(records, fasta_out)
-    print(f"提取 {len(records)} 条序列 -> {fasta_out}")
+    print(f"Extracted {len(records)} sequences -> {fasta_out}")
 
     # 8. 输出过滤后的 BLAST 表格
     output_filtered_table(all_selected, original_headers, args.output + ".filtered.tsv")
 
-    print("完成。")
+    print("Done")
 
 if __name__ == "__main__":
     main()
